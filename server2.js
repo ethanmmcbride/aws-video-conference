@@ -3,10 +3,12 @@ import dotenv from "dotenv";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "crypto";
+import cors from "cors";
 
 dotenv.config();
 const app = express();
 app.use(express.json());
+app.use(cors({ origin: "http://localhost:5173" }));
 
 const ddb = new DynamoDBClient({ region: process.env.AWS_REGION });
 const doc = DynamoDBDocumentClient.from(ddb);

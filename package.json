@@ -1,7 +1,13 @@
 {
+  "type": "module",
+    "scripts": {
+    "start": "node server2.js",
+    "dev": "nodemon server2.js"
+  },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.914.0",
     "@aws-sdk/lib-dynamodb": "^3.914.0",
+    "cors": "^2.8.5",
     "crypto": "^1.0.1",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",

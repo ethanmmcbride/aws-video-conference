@@ -77,7 +77,7 @@ export default function App() {
         <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
           <h3 style={{ margin: 0 }}>Messages</h3>
           <small style={{ opacity: 0.7 }}>(Room: {roomId})</small>
-          {isLoading && <small style={{ marginLeft: "auto", opacity: 0.7 }}>Loading…</small>}
+          {/*isLoading && <small style={{ marginLeft: "auto", opacity: 0.7 }}>Loading…</small>*/}
         </div>
         <div
           ref={listRef}

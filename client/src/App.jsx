@@ -34,8 +34,8 @@ export default function App() {
   }, [roomId]);
 
   return (
-    <div style={{ maxWidth: 640, margin: "2rem auto", fontFamily: "sans-serif" }}>
-      <h2>Chat Tester</h2>
+    <div style={{ maxWidth: 640, margin: "2rem auto", fontFamily: "sans-serif", marginLeft: "200px" }}>
+      <h2>DynamoDB testing and Room Creation</h2>
       <div style={{ display: "grid", gap: 8 }}>
         <label>
           Room ID:{" "}
@@ -56,14 +56,7 @@ export default function App() {
         </form>
       </div>
 
-      <h3>Messages</h3>
-      <ul>
-        {messages.map((m) => (
-          <li key={m.ts}>
-            <strong>{m.senderId}</strong>: {m.text} <small>({m.ts})</small>
-          </li>
-        ))}
-      </ul>
+      
     </div>
   );
 }

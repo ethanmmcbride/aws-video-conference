@@ -1,115 +1,329 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import io from "socket.io-client";
+
+const API = "http://localhost:4000"; // Express + Socket.IO server
 
 export default function App() {
+  // —— Chat state ——
   const [roomId, setRoomId] = useState("roomA");
   const [senderId, setSenderId] = useState("alice");
   const [text, setText] = useState("");
   const [messages, setMessages] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
 
-  const API = "http://localhost:4000";
-  const listRef = useRef(null);
+  // —— WebRTC state ——
+  const socketRef = useRef(null);
+  const pcRef = useRef(null);
+  const localVideoRef = useRef(null);
+  const remoteVideoRef = useRef(null);
+  const [localStream, setLocalStream] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(null);
+  const [screenStream, setScreenStream] = useState(null);
 
-  async function sendMessage(e) {
+  // —— Recording state ——
+  const [recorder, setRecorder] = useState(null);
+  const [recordedBlobs, setRecordedBlobs] = useState([]);
+
+  const pendingRemoteIceRef = useRef([]);
+
+  // Socket connection (memoized so we create once)
+  const socket = useMemo(() => {
+    if (!socketRef.current) {
+      socketRef.current = io(API, {
+        transports: ["websocket"],
+        forceNew: true,
+        autoConnect: false,
+      });
+    }
+    return socketRef.current;
+  }, []);
+
+  // Join/leave room when roomId changes
+  useEffect(() => {
+    if (!socket) return;
+
+    const onSignal = async (payload) => {
+      const { type, sdp, candidate } = payload;
+      const pc = getOrCreatePeer();
+
+      if (type === "offer" && sdp) {
+        await pc.setRemoteDescription({ type: "offer", sdp });
+        if (localStream) {
+          localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+        } else if (pc.getTransceivers().length === 0) {
+          ["video","audio"].forEach(kind =>
+            pc.addTransceiver(kind, { direction: "recvonly" })
+          );
+        }
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit("signal", { roomId, type: "answer", sdp: answer.sdp, senderId });
+        flushQueuedIce(pc);
+
+      } else if (type === "answer" && sdp) {
+        await pc.setRemoteDescription({ type: "answer", sdp });
+        flushQueuedIce(pc);
+
+      } else if (type === "ice" && candidate) {
+        if (!pc.remoteDescription) {
+          pendingRemoteIceRef.current.push(candidate);
+        } else {
+          try { await pc.addIceCandidate(candidate); }
+          catch (e) { console.error("addIceCandidate failed", e); }
+        }
+      }
+    };
+
+    const onConnect = () => {
+      socket.emit("join", { roomId, senderId });
+    };
+
+    socket.on("connect", onConnect);
+    socket.on("signal", onSignal);
+    socket.connect();
+
+    return () => {
+      socket.off("connect", onConnect);
+      socket.off("signal", onSignal);
+      socket.emit("leave", { roomId, senderId });
+      socket.disconnect();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId, senderId]);
+  // Chat: fetch (simple polling)
+  useEffect(() => {
+    let timer;
+    const load = async () => {
+      const res = await fetch(`${API}/rooms/${roomId}/messages?limit=200`);
+      const items = await res.json();
+      setMessages(items);
+    };
+    load();
+    timer = setInterval(load, 2000);
+    return () => clearInterval(timer);
+  }, [roomId]);
+
+  async function sendChat(e) {
     e.preventDefault();
     if (!text.trim()) return;
     const res = await fetch(`${API}/rooms/${roomId}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ senderId, text })
+      body: JSON.stringify({ senderId, text, type: "text" }),
     });
     const msg = await res.json();
     setText("");
-    // optimistic update
     setMessages((m) => [...m, msg]);
   }
 
-  async function fetchMessages() {
+  // —— WebRTC helpers ——
+  function getOrCreatePeer() {
+    if (pcRef.current) return pcRef.current;
+
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        // Add TURN here for production reliability
+        // { urls: "turn:YOUR_TURN", username: "user", credential: "pass" }
+      ],
+    });
+
+  function flushQueuedIce(pc) {
+    if (!pc?.remoteDescription) return;
+    for (const c of pendingRemoteIceRef.current) {
+      pc.addIceCandidate(c).catch(err => console.error("Queued ICE failed", err));
+    }
+    pendingRemoteIceRef.current = [];
+  }
+
+    pc.onicecandidate = (e) => {
+      if (e.candidate) {
+        socket.emit("signal", { roomId, type: "ice", candidate: e.candidate, senderId });
+      }
+    };
+
+    const inbound = new MediaStream();
+    pc.ontrack = (evt) => {
+      evt.streams[0].getTracks().forEach((t) => inbound.addTrack(t));
+      setRemoteStream(inbound);
+      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = inbound;
+    };
+
+    pcRef.current = pc;
+    return pc;
+  }
+
+  async function startCamera() {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    setLocalStream(stream);
+    if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+  }
+
+  async function shareScreen() {
+    // Try to capture screen + system audio (browser-dependent); fall back to mic.
+    let screen;
     try {
-      setIsLoading(true);
-      const res = await fetch(`${API}/rooms/${roomId}/messages?limit=50`);
-      const items = await res.json();
-      setMessages(items);
-    } finally {
-      setIsLoading(false);
+      screen = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    } catch (e) {
+      // Some browsers disallow system audio; try without
+      screen = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    }
+
+    // Add mic to the screen stream if it lacks audio
+    if (!screen.getAudioTracks().length) {
+      try {
+        const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mic.getAudioTracks().forEach((t) => screen.addTrack(t));
+      } catch (_) {
+        // ignore if mic not granted
+      }
+    }
+
+    setScreenStream(screen);
+    setLocalStream(screen);
+    if (localVideoRef.current) localVideoRef.current.srcObject = screen;
+
+    // If already in a call, replace outgoing tracks
+    if (pcRef.current) {
+      const senders = pcRef.current.getSenders();
+      const videoTrack = screen.getVideoTracks()[0];
+      const audioTrack = screen.getAudioTracks()[0];
+      if (videoTrack) {
+        const vs = senders.find((s) => s.track && s.track.kind === "video");
+        if (vs) await vs.replaceTrack(videoTrack);
+      }
+      if (audioTrack) {
+        const as = senders.find((s) => s.track && s.track.kind === "audio");
+        if (as) await as.replaceTrack(audioTrack);
+      }
     }
   }
 
-  // Fetch on mount and whenever room changes
-  useEffect(() => {
-    fetchMessages();
-    const id = setInterval(fetchMessages, 2000); // simple polling
-    return () => clearInterval(id);
-  }, [roomId]);
+  async function startCall() {
+    const pc = getOrCreatePeer();
+    // Add local tracks (camera or screen)
+    const base = localStream;
+    if (!localStream) return alert("Start camera or share screen first.");
+    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    socket.emit("signal", { roomId, type: "offer", sdp: offer.sdp, senderId });
+  }
 
-  // Auto-scroll to the latest message when messages change
-  useEffect(() => {
-    if (listRef.current) {
-      listRef.current.scrollTop = listRef.current.scrollHeight;
+  function hangUp() {
+    try { recorder?.state === "recording" && recorder.stop(); } catch {}
+
+    if (pcRef.current) {
+      pcRef.current.getSenders().forEach((s) => s.track && s.track.stop());
+      pcRef.current.ontrack = null;
+      pcRef.current.onicecandidate = null;
+      pcRef.current.close();
+      pcRef.current = null;
     }
-  }, [messages]);
+    if (localStream) localStream.getTracks().forEach((t) => t.stop());
+    if (screenStream) screenStream.getTracks().forEach((t) => t.stop());
+    setLocalStream(null);
+    setScreenStream(null);
+    setRemoteStream(null);
+    if (localVideoRef.current) localVideoRef.current.srcObject = null;
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+  }
+
+  // —— Recording (Screen or Local/Remote) ——
+  function startRecording(which = "screen") {
+    let streamToRecord = null;
+    if (which === "screen" && screenStream) streamToRecord = screenStream;
+    if (!streamToRecord) streamToRecord = localStream || remoteStream; // fallback
+    if (!streamToRecord) return alert("Nothing to record yet.");
+
+    const chunks = [];
+    const mr = new MediaRecorder(streamToRecord, { mimeType: "video/webm;codecs=vp9,opus" });
+    mr.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    mr.onstop = () => setRecordedBlobs(chunks);
+    mr.start(1000);
+    setRecorder(mr);
+  }
+
+  function stopRecording() {
+    if (recorder && recorder.state === "recording") recorder.stop();
+  }
+
+  async function uploadRecording() {
+    if (!recordedBlobs.length) return alert("No recording available.");
+    const blob = new Blob(recordedBlobs, { type: "video/webm" });
+    const filename = `${senderId}-${Date.now()}.webm`;
+
+    const urlRes = await fetch(
+      `${API}/s3/sign-put?filename=${encodeURIComponent(filename)}&contentType=video/webm&roomId=${encodeURIComponent(roomId)}`
+    );
+    const { url, key, bucket, error } = await urlRes.json();
+    if (error) return alert("Failed to get upload URL");
+
+    const put = await fetch(url, {
+      method: "PUT",
+      headers: { "Content-Type": "video/webm" },
+      body: blob,
+    });
+    if (!put.ok) return alert("Upload failed");
+    alert(`Uploaded to s3://${bucket}/${key}`);
+  }
 
   return (
-    <div style={{ maxWidth: 640, margin: "2rem auto", fontFamily: "sans-serif", marginLeft: "200px" }}>
-      <h2>Chat Feature Testing Using DynamoDB</h2>
-      <div style={{ display: "grid", gap: 8 }}>
-        <label>
-          Room ID:{" "}
-          <input value={roomId} onChange={(e) => setRoomId(e.target.value)} />
-        </label>
-        <label>
-          Sender ID:{" "}
-          <input value={senderId} onChange={(e) => setSenderId(e.target.value)} />
-        </label>
-        <form onSubmit={sendMessage} style={{ display: "flex", gap: 8 }}>
-          <input
-            placeholder="Type a message"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            style={{ flex: 1 }}
-          />
-          <button disabled={!text.trim()}>Send</button>
-        </form>
-      </div>
+    <div style={{ maxWidth: 1000, margin: "2rem auto", fontFamily: "Inter, system-ui, sans-serif" }}>
+      <h2>Chat + WebRTC (Socket.IO signaling)</h2>
 
-      {/* Messages list */}
-      <div style={{ marginTop: 16 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-          <h3 style={{ margin: 0 }}>Messages</h3>
-          <small style={{ opacity: 0.7 }}>(Room: {roomId})</small>
-          {/*isLoading && <small style={{ marginLeft: "auto", opacity: 0.7 }}>Loading…</small>*/}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div>
+          <div style={{ display: "grid", gap: 8 }}>
+            <label>
+              Room ID:{" "}
+              <input value={roomId} onChange={(e) => setRoomId(e.target.value)} />
+            </label>
+            <label>
+              Sender ID:{" "}
+              <input value={senderId} onChange={(e) => setSenderId(e.target.value)} />
+            </label>
+          </div>
+
+          <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={startCamera}>Start Camera</button>
+            <button onClick={shareScreen}>Share Screen</button>
+            <button onClick={startCall}>Join/Start Call</button>
+            <button onClick={hangUp}>Hang Up</button>
+            <button onClick={() => startRecording("screen")} disabled={recorder && recorder.state === "recording"}>Start Screen Recording</button>
+            <button onClick={stopRecording} disabled={!recorder || recorder.state !== "recording"}>Stop Recording</button>
+            <button onClick={uploadRecording} disabled={!recordedBlobs.length}>Upload to S3</button>
+          </div>
+
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <h4 style={{ margin: 0 }}>Local</h4>
+              <video ref={localVideoRef} playsInline autoPlay muted style={{ width: "100%", border: "1px solid #ddd", borderRadius: 8 }} />
+            </div>
+            <div>
+              <h4 style={{ margin: 0 }}>Remote</h4>
+              <video ref={remoteVideoRef} playsInline autoPlay style={{ width: "100%", border: "1px solid #ddd", borderRadius: 8 }} />
+            </div>
+          </div>
         </div>
-        <div
-          ref={listRef}
-          style={{
-            border: "1px solid #ddd",
-            borderRadius: 8,
-            padding: 12,
-            height: 320,
-            overflowY: "auto",
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
-            background: "#fafafa"
-          }}
-        >
-          {(!messages || messages.length === 0) && (
-            <div style={{ opacity: 0.6 }}>No messages yet. Be the first to say hi 👋</div>
-          )}
-          {messages &&
-            messages.map((m, idx) => {
-              const key = m.id ?? `${m.senderId}-${m.createdAt ?? idx}`;
-              const ts = m.createdAt ? new Date(m.createdAt) : null;
+
+        <div>
+          <h3 style={{ marginTop: 0 }}>Messages (Room: {roomId})</h3>
+          <form onSubmit={sendChat} style={{ display: "flex", gap: 8 }}>
+            <input
+              placeholder="Type a message"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              style={{ flex: 1 }}
+            />
+            <button disabled={!text.trim()}>Send</button>
+          </form>
+
+          <div style={{ marginTop: 12, height: 360, overflowY: "auto", border: "1px solid #eee", borderRadius: 8, padding: 10, background: "#fafafa" }}>
+            {messages.length === 0 && <div style={{ opacity: 0.6 }}>No messages yet.</div>}
+            {messages.map((m, idx) => {
+              const ts = m.ts ? new Date(m.ts.split("#")[0]) : null;
               return (
-                <div
-                  key={key}
-                  style={{
-                    background: "white",
-                    border: "1px solid #eee",
-                    borderRadius: 8,
-                    padding: 10
-                  }}
-                >
+                <div key={m.messageId ?? idx} style={{ background: "#fff", border: "1px solid #eee", borderRadius: 8, padding: 8, marginBottom: 8 }}>
                   <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
                     <strong>{m.senderId ?? "unknown"}</strong>
                     {ts && <small style={{ opacity: 0.6 }}>{ts.toLocaleString()}</small>}
@@ -118,6 +332,7 @@ export default function App() {
                 </div>
               );
             })}
+          </div>
         </div>
       </div>
     </div>

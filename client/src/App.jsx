@@ -268,42 +268,44 @@ export default function App() {
   }
 
   return (
-    <div style={{ maxWidth: 1000, margin: "2rem auto", fontFamily: "Inter, system-ui, sans-serif" }}>
+    <div style={{ margin: "30px", fontFamily: "Inter, system-ui, sans-serif" }}>
       <h2>Chat + WebRTC (Socket.IO signaling)</h2>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr .5fr", gap: 16 }}>
         <div>
-          <div style={{ display: "grid", gap: 8 }}>
+          <div style={{ display: "grid",  gridTemplateColumns: ".5fr 1fr" }}>
             <label>
               Room ID:{" "}
-              <input value={roomId} onChange={(e) => setRoomId(e.target.value)} />
+              <input value={roomId} onChange={(e) => setRoomId(e.target.value)} style={{border: "1px solid #eee", borderRadius: 8, padding: 10}} />
             </label>
             <label>
-              Sender ID:{" "}
-              <input value={senderId} onChange={(e) => setSenderId(e.target.value)} />
+              Sender ID (Name):{" "}
+              <input value={senderId} onChange={(e) => setSenderId(e.target.value)} style={{border: "1px solid #eee", borderRadius: 8, padding: 10}}/>
             </label>
           </div>
 
-          <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button onClick={startCamera}>Start Camera</button>
-            <button onClick={shareScreen}>Share Screen</button>
-            <button onClick={startCall}>Join/Start Call</button>
-            <button onClick={hangUp}>Hang Up</button>
-            <button onClick={() => startRecording("screen")} disabled={recorder && recorder.state === "recording"}>Start Screen Recording</button>
-            <button onClick={stopRecording} disabled={!recorder || recorder.state !== "recording"}>Stop Recording</button>
-            <button onClick={uploadRecording} disabled={!recordedBlobs.length}>Upload to S3</button>
-          </div>
 
           <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div>
               <h4 style={{ margin: 0 }}>Local</h4>
-              <video ref={localVideoRef} playsInline autoPlay muted style={{ width: "100%", border: "1px solid #ddd", borderRadius: 8 }} />
+              <video ref={localVideoRef} playsInline autoPlay muted style={{ width: "100%", height: "100%", border: "1px solid #626161ff", borderRadius: 8 }} />
             </div>
             <div>
               <h4 style={{ margin: 0 }}>Remote</h4>
-              <video ref={remoteVideoRef} playsInline autoPlay style={{ width: "100%", border: "1px solid #ddd", borderRadius: 8 }} />
+              <video ref={remoteVideoRef} playsInline autoPlay style={{ width: "100%", height: "100%", border: "1px solid #626161ff", borderRadius: 8 }} />
             </div>
           </div>
+
+          <div style={{ marginTop: 120, display: "flex", gap: 20 }}>
+            <button onClick={startCall}>Join/Start Call</button>
+            <button onClick={startCamera}><img src="/public/cameraIcon.png" alt="Camera Icon" style={{height:"60px", width:"60px"}}/></button>
+            <button onClick={shareScreen}><img src="/public/shareIcon.png" alt="Share Screen Icon" style={{height:"60px", width:"60px"}}/></button>
+            <button onClick={() => startRecording("screen")} disabled={recorder && recorder.state === "recording"}><img src="/public/recordIcon.png" alt="RecordIcon" style={{height:"45px", width:"45px"}}/></button>
+            <button onClick={stopRecording} disabled={!recorder || recorder.state !== "recording"}>Stop Recording</button>
+            <button onClick={uploadRecording} disabled={!recordedBlobs.length}>Upload to S3</button>
+            <button onClick={hangUp} style={{background:"#EB5757"}}>Hang Up</button>
+          </div>
+
         </div>
 
         <div>
@@ -313,17 +315,17 @@ export default function App() {
               placeholder="Type a message"
               value={text}
               onChange={(e) => setText(e.target.value)}
-              style={{ flex: 1 }}
+              style={{ flex: 1, border: "1px solid #eee", borderRadius: 8, padding: 10,  }}
             />
             <button disabled={!text.trim()}>Send</button>
           </form>
 
-          <div style={{ marginTop: 12, height: 360, overflowY: "auto", border: "1px solid #eee", borderRadius: 8, padding: 10, background: "#fafafa" }}>
+          <div style={{ marginTop: 12, height: 360, overflowY: "auto", border: "1px solid #626161ff", borderRadius: 8, padding: 10 }}>
             {messages.length === 0 && <div style={{ opacity: 0.6 }}>No messages yet.</div>}
             {messages.map((m, idx) => {
               const ts = m.ts ? new Date(m.ts.split("#")[0]) : null;
               return (
-                <div key={m.messageId ?? idx} style={{ background: "#fff", border: "1px solid #eee", borderRadius: 8, padding: 8, marginBottom: 8 }}>
+                <div key={m.messageId ?? idx} style={{  border: "1px solid #8d8b8bff", borderRadius: 8, padding: 8, marginBottom: 8 }}>
                   <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
                     <strong>{m.senderId ?? "unknown"}</strong>
                     {ts && <small style={{ opacity: 0.6 }}>{ts.toLocaleString()}</small>}

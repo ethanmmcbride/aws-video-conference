@@ -34,7 +34,10 @@ const S3_BUCKET = process.env.S3_BUCKET; // Bucket for recordings
 
 const ddb = new DynamoDBClient({ region: REGION });
 const doc = DynamoDBDocumentClient.from(ddb);
-const s3 = new S3Client({ region: REGION });
+const s3 = new S3Client({ region: REGION, 
+  requestChecksumCalculation: "WHEN_REQUIRED",
+  responseChecksumValidation: "WHEN_REQUIRED",
+ });
 
 
 // ————— Chat (REST) —————
@@ -90,16 +93,18 @@ app.get("/rooms/:roomId/messages", async (req, res) => {
 app.get("/s3/sign-put", async (req, res) => {
   try {
     const { filename = `recording.webm`, contentType = "video/webm", roomId = "default" } = req.query;
+    console.log("[/s3/sign-put] incoming", { filename, contentType, roomId });
     const key = `recordings/${roomId}/${Date.now()}-${filename}`;
-    const url = await getSignedUrl(
-    s3,
-    new PutObjectCommand({ 
-      Bucket: S3_BUCKET, 
-      Key: key, 
-      ContentType: contentType, 
-      ACL: "private" }),
-    { expiresIn: 60 }
-    );
+    
+    const putCmd = new PutObjectCommand({
+      Bucket: S3_BUCKET,
+      Key: key,
+      ContentType: contentType,
+      // NOTE: Do NOT set ACL unless you KNOW the bucket allows ACLs.
+      // ACL: "private",
+    });
+    const url = await getSignedUrl(s3, putCmd, { expiresIn: 60 });
+    console.log("[/s3/sign-put] signed", { bucket: S3_BUCKET, key, region: REGION });
     res.json({ url, key, bucket: S3_BUCKET });
   } catch (e) {
     console.error(e);
@@ -109,15 +114,15 @@ app.get("/s3/sign-put", async (req, res) => {
 
 
 app.get("/s3/sign-get", async (req, res) => {
-try {
-const { key } = req.query;
-if (!key) return res.status(400).json({ error: "key required" });
-const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: S3_BUCKET, Key: key }), { expiresIn: 60 });
-res.json({ url });
-} catch (e) {
-console.error(e);
-res.status(500).json({ error: "Failed to create presigned GET URL" });
-}
+  try {
+    const { key } = req.query;
+    if (!key) return res.status(400).json({ error: "key required" });
+      const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: S3_BUCKET, Key: key }), { expiresIn: 60 });
+      res.json({ url });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to create presigned GET URL" });
+  }
 });
 
 

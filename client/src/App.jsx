@@ -41,6 +41,14 @@ export default function App() {
   useEffect(() => {
     if (!socket) return;
 
+    function flushQueuedIce(pc) {
+      if (!pc?.remoteDescription) return;
+      for (const c of pendingRemoteIceRef.current) {
+        pc.addIceCandidate(c).catch(err => console.error("Queued ICE failed", err));
+      }
+      pendingRemoteIceRef.current = [];
+    }
+
     const onSignal = async (payload) => {
       const { type, sdp, candidate } = payload;
       const pc = getOrCreatePeer();
@@ -127,13 +135,7 @@ export default function App() {
       ],
     });
 
-  function flushQueuedIce(pc) {
-    if (!pc?.remoteDescription) return;
-    for (const c of pendingRemoteIceRef.current) {
-      pc.addIceCandidate(c).catch(err => console.error("Queued ICE failed", err));
-    }
-    pendingRemoteIceRef.current = [];
-  }
+  
 
     pc.onicecandidate = (e) => {
       if (e.candidate) {
@@ -252,19 +254,45 @@ export default function App() {
     const blob = new Blob(recordedBlobs, { type: "video/webm" });
     const filename = `${senderId}-${Date.now()}.webm`;
 
-    const urlRes = await fetch(
-      `${API}/s3/sign-put?filename=${encodeURIComponent(filename)}&contentType=video/webm&roomId=${encodeURIComponent(roomId)}`
-    );
-    const { url, key, bucket, error } = await urlRes.json();
-    if (error) return alert("Failed to get upload URL");
+    console.log("[uploadRecording] start", { size: blob.size, type: blob.type, filename, roomId });
+    const presignUrl = `${API}/s3/sign-put?filename=${encodeURIComponent(filename)}&contentType=${encodeURIComponent(blob.type)}&roomId=${encodeURIComponent(roomId)}`;
+    let url, key, bucket;
+    try {
+      const urlRes = await fetch(presignUrl);
+      const json = await urlRes.json().catch(() => ({}));
+      console.log("[uploadRecording] presign response", { status: urlRes.status, json });
+      if (!urlRes.ok || json?.error) {
+        alert(`Failed to get upload URL (HTTP ${urlRes.status})`);
+        return;
+      }
+      ({ url, key, bucket } = json);
+    } catch (e) {
+      console.error("[uploadRecording] presign fetch error", e);
+      alert("Failed to get upload URL (network error). See console.");
+      return;
+    }
 
-    const put = await fetch(url, {
-      method: "PUT",
-      headers: { "Content-Type": "video/webm" },
-      body: blob,
-    });
-    if (!put.ok) return alert("Upload failed");
-    alert(`Uploaded to s3://${bucket}/${key}`);
+
+    try {
+      // If your bucket policy enforces SSE-S3 (AES256), UNCOMMENT the SSE header.
+      // (Must match what the server signed; if server didn’t include SSE in the presign, don’t send it.)
+      const headers = { "Content-Type": blob.type };
+      // headers["x-amz-server-side-encryption"] = "AES256";
+
+      const put = await fetch(url, { method: "PUT", headers, body: blob });
+      const bodyText = await put.text().catch(() => "(no response body)");
+      console.log("[uploadRecording] PUT result", { status: put.status, ok: put.ok, body: bodyText });
+      if (!put.ok) {
+        alert(`Upload failed (HTTP ${put.status}). See console for details.`);
+        return;
+      }
+      // Success! ETag is the canonical success signal.
+      console.log("[uploadRecording] success ETag:", put.headers.get("ETag"));
+      alert(`Uploaded to s3://${bucket}/${key}`);
+    } catch (e) {
+      console.error("[uploadRecording] PUT network error", e);
+      alert("Upload failed (network error). See console.");
+    }
   }
 
   return (

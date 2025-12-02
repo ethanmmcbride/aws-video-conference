@@ -180,6 +180,19 @@ export default function App() {
       }
     }
 
+    const videoTrack = screen.getVideoTracks()[0];
+    const audioTrack = screen.getAudioTracks()[0];
+
+    // Switches back to camera once stopped sharing screen
+    videoTrack.onended = async () => {
+      await startCamera();
+      const cameraTrack = localStream.getVideoTracks()[0];
+      const senders = pcRef.current.getSenders();
+      const send = senders.find((s) => s.track && s.track.kind === "video");
+
+      if (cameraTrack && send){send.replaceTrack(cameraTrack);}
+    }
+
     setScreenStream(screen);
     setLocalStream(screen);
     if (localVideoRef.current) localVideoRef.current.srcObject = screen;
@@ -187,8 +200,6 @@ export default function App() {
     // If already in a call, replace outgoing tracks
     if (pcRef.current) {
       const senders = pcRef.current.getSenders();
-      const videoTrack = screen.getVideoTracks()[0];
-      const audioTrack = screen.getAudioTracks()[0];
       if (videoTrack) {
         const vs = senders.find((s) => s.track && s.track.kind === "video");
         if (vs) await vs.replaceTrack(videoTrack);
@@ -198,6 +209,8 @@ export default function App() {
         if (as) await as.replaceTrack(audioTrack);
       }
     }
+
+    
   }
 
   async function startCall() {

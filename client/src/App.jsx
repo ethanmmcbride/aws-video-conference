@@ -310,7 +310,7 @@ export default function App() {
 
   return (
     <div style={{ margin: "30px", fontFamily: "Inter, system-ui, sans-serif" }}>
-      <h2>Chat + WebRTC (Socket.IO signaling)</h2>
+      <h2>Video Conferencing w/ WebRTC and AWS</h2>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr .5fr", gap: 16 }}>
         <div>

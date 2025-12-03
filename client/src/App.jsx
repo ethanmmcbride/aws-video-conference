@@ -5,23 +5,23 @@ const API = "http://localhost:4000"; // Express + Socket.IO server
 
 export default function App() {
   // —— Chat state ——
-  const [roomId, setRoomId] = useState("roomA");
-  const [senderId, setSenderId] = useState("alice");
-  const [text, setText] = useState("");
-  const [messages, setMessages] = useState([]);
+  const [roomId, setRoomId] = useState("roomA"); // The current chat room identifier
+  const [senderId, setSenderId] = useState("alice"); // Identifier for the current user that's sending messages
+  const [text, setText] = useState(""); // The state for the current input field value (new message text)
+  const [messages, setMessages] = useState([]); // The array to store all the received as well as sent chat messages
 
   // —— WebRTC state ——
-  const socketRef = useRef(null);
-  const pcRef = useRef(null);
-  const localVideoRef = useRef(null);
-  const remoteVideoRef = useRef(null);
-  const [localStream, setLocalStream] = useState(null);
-  const [remoteStream, setRemoteStream] = useState(null);
-  const [screenStream, setScreenStream] = useState(null);
+  const socketRef = useRef(null); // The reference to the Socket.IO client instance for purposes of signaling
+  const pcRef = useRef(null); // The reference to the RTCPeerConnection instance 
+  const localVideoRef = useRef(null); // The reference to the DOM element that's displaying the user's local stream
+  const remoteVideoRef = useRef(null); // The reference to the DOM element that's displaying the remote peer's stream
+  const [localStream, setLocalStream] = useState(null); // Tracks the LocalStream object for the user's camera/mic
+  const [remoteStream, setRemoteStream] = useState(null); // Tracks the RemoteStream object for the remote user's feed
+  const [screenStream, setScreenStream] = useState(null); // Tracks the ScreenStream object when sharing the screen
 
   // —— Recording state ——
   const [recorder, setRecorder] = useState(null);
-  const [recordedBlobs, setRecordedBlobs] = useState([]);
+  const [recordedBlobs, setRecordedBlobs] = useState([]); // Array to store chunks of media data during recording
 
   const pendingRemoteIceRef = useRef([]);
 
